@@ -8,13 +8,13 @@ WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks
 RSS_URL = "https://www.wowhead.com/news/rss/all"
 LAST_ENTRY_FILE = "last_forever_id.txt"
 
-def get_last_id():
+def get_last_entry_id():
     if os.path.exists(LAST_ENTRY_FILE):
         with open(LAST_ENTRY_FILE, "r", encoding="utf-8") as f:
             return f.read().strip()
     return None
 
-def set_last_id(entry_id):
+def set_last_entry_id(entry_id):
     with open(LAST_ENTRY_FILE, "w", encoding="utf-8") as f:
         f.write(entry_id)
 
@@ -24,71 +24,78 @@ def send_to_discord(content):
         if chunk.strip():
             payload = {"content": chunk}
             res = requests.post(WEBHOOK_URL, json=payload)
-            print(f"Discord gönderim yanıtı: {res.status_code}")
+            print(f"Discord gönderim durumu: {res.status_code}")
             time.sleep(1)
 
 def clean_html(raw_html):
     if not raw_html:
         return ""
     soup = BeautifulSoup(raw_html, "html.parser")
-    for tag in soup(["script", "style", "noscript", "img", "aside"]):
+    for tag in soup(["script", "style", "noscript", "img"]):
         tag.decompose()
     return soup.get_text(separator="\n", strip=True)
 
 def is_forever_news(entry):
     title = entry.get("title", "").lower()
-    link = entry.get("link", "").lower()
-    summary = entry.get("summary", "").lower()
-    tags = [t.get("term", "").lower() for t in entry.get("tags", [])]
-
-    # Forever kelimesi başlıkta, linkte veya etiketlerde geçiyor mu?
-    if "forever" in title or "forever" in link or any("forever" in t for t in tags):
+    if "forever" in title:
         return True
+    
+    link = entry.get("link", "").lower()
+    if "/forever" in link:
+        return True
+
+    if "tags" in entry:
+        for t in entry.tags:
+            term = t.get("term", "").lower()
+            if "forever" in term:
+                return True
+                
     return False
 
 def run():
-    print("RSS akışı alınıyor...")
+    print("Wowhead RSS akışı çekiliyor...")
     feed = feedparser.parse(RSS_URL)
     
     if not feed.entries:
-        print("RSS beslemesinden içerik alınamadı!")
+        print("RSS beslemesi boş veya alınamadı.")
         return
 
-    print(f"Toplam {len(feed.entries)} adet haber tarandı. WoW Forever haberleri aranıyor...")
-    
-    # Haberler arasından sadece WoW Forever olanları filtrele
-    forever_entries = [entry for entry in feed.entries if is_forever_news(entry)]
-    
-    if not forever_entries:
-        print("Akışta henüz WoW Forever kategorisine ait haber bulunamadı.")
+    print(f"Toplam {len(feed.entries)} haber inceleniyor...")
+
+    target_entry = None
+    for entry in feed.entries:
+        if is_forever_news(entry):
+            target_entry = entry
+            break
+
+    if not target_entry:
+        print("Akışta henüz WoW Forever ile ilgili bir haber bulunamadı.")
         return
 
-    latest_entry = forever_entries[0]
-    title = latest_entry.title
-    link = latest_entry.link
-    entry_id = latest_entry.id
+    title = target_entry.title
+    link = target_entry.link
+    entry_id = target_entry.id
+    last_id = get_last_entry_id()
 
     print(f"Bulunan en son WoW Forever haberi: {title}")
-    
-    last_id = get_last_id()
-    
-    # İçeriği RSS'ten temiz metin olarak al
-    raw_content = ""
-    if "content" in latest_entry:
-        raw_content = latest_entry.content[0].value
-    elif "summary" in latest_entry:
-        raw_content = latest_entry.summary
-    elif "description" in latest_entry:
-        raw_content = latest_entry.description
 
-    body_text = clean_html(raw_content)
+    # Sadece yeni bir haber geldiğinde çalışır:
+    if entry_id != last_id:
+        print("Yeni haber bulundu, Discord'a gönderiliyor...")
+        
+        raw_content = ""
+        if "content" in target_entry:
+            raw_content = target_entry.content[0].value
+        elif "summary" in target_entry:
+            raw_content = target_entry.summary
 
-    full_message = f"⚔️ **[WoW Forever] {title}**\n\n{body_text}\n\n🔗 *Kaynak: {link}*"
-    
-    # Discord'a gönder
-    print("Discord'a iletiliyor...")
-    send_to_discord(full_message)
-    set_last_id(entry_id)
+        body_text = clean_html(raw_content)
+
+        msg = f"⚔️ **[WoW Forever] {title}**\n\n{body_text}\n\n🔗 *Kaynak: {link}*"
+        send_to_discord(msg)
+        set_last_entry_id(entry_id)
+    else:
+        print("Yeni haber yok. Bu haber zaten daha önce Discord'a iletilmiş.")
 
 if __name__ == "__main__":
     try:
