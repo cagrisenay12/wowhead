@@ -1,21 +1,22 @@
 import os
 import time
+import feedparser
 import requests
 from bs4 import BeautifulSoup
 
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/1564335678458957874/k-T8sQPIgKuxCfqYETULyuE3NdSVDNqaTnyaXYH-PXt2DBa7xKXIRMZdak_VHfBTzyy9")
-NEWS_URL = "https://www.wowhead.com/forever/news"
-LAST_ENTRY_FILE = "last_forever_title.txt"
+RSS_URL = "https://www.wowhead.com/news/rss/all"
+LAST_ENTRY_FILE = "last_forever_id.txt"
 
-def get_last_title():
+def get_last_id():
     if os.path.exists(LAST_ENTRY_FILE):
         with open(LAST_ENTRY_FILE, "r", encoding="utf-8") as f:
             return f.read().strip()
     return None
 
-def set_last_title(title):
+def set_last_id(entry_id):
     with open(LAST_ENTRY_FILE, "w", encoding="utf-8") as f:
-        f.write(title)
+        f.write(entry_id)
 
 def send_to_discord(content):
     chunks = [content[i:i+1900] for i in range(0, len(content), 1900)]
@@ -23,62 +24,74 @@ def send_to_discord(content):
         if chunk.strip():
             payload = {"content": chunk}
             res = requests.post(WEBHOOK_URL, json=payload)
-            print(f"Discord gönderim durumu: {res.status_code}")
+            print(f"Discord gönderim yanıtı: {res.status_code}")
             time.sleep(1)
 
+def clean_html(raw_html):
+    if not raw_html:
+        return ""
+    soup = BeautifulSoup(raw_html, "html.parser")
+    for tag in soup(["script", "style", "noscript", "img", "aside"]):
+        tag.decompose()
+    return soup.get_text(separator="\n", strip=True)
+
+def is_forever_news(entry):
+    title = entry.get("title", "").lower()
+    link = entry.get("link", "").lower()
+    summary = entry.get("summary", "").lower()
+    tags = [t.get("term", "").lower() for t in entry.get("tags", [])]
+
+    # Forever kelimesi başlıkta, linkte veya etiketlerde geçiyor mu?
+    if "forever" in title or "forever" in link or any("forever" in t for t in tags):
+        return True
+    return False
+
 def run():
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    print("RSS akışı alınıyor...")
+    feed = feedparser.parse(RSS_URL)
     
-    print("Wowhead Forever sayfası çekiliyor...")
-    res = requests.get(NEWS_URL, headers=headers)
-    print(f"Sayfa yanıt kodu: {res.status_code}")
-    
-    if res.status_code != 200:
-        print("Sayfaya erişilemedi!")
+    if not feed.entries:
+        print("RSS beslemesinden içerik alınamadı!")
         return
 
-    soup = BeautifulSoup(res.text, "html.parser")
+    print(f"Toplam {len(feed.entries)} adet haber tarandı. WoW Forever haberleri aranıyor...")
     
-    # Sayfadaki haber kartlarını bul
-    card = soup.find("div", class_="news-list-card")
-    if not card:
-        # Alternatif kart seçici
-        card = soup.find("div", class_="news-card")
+    # Haberler arasından sadece WoW Forever olanları filtrele
+    forever_entries = [entry for entry in feed.entries if is_forever_news(entry)]
     
-    if not card:
-        print("Haber kartı bulunamadı. Sayfa yapısı inceleniyor...")
-        # Başlık ve içeriği genel linklerden arayalım
-        first_h2 = soup.find("h2")
-        title = first_h2.get_text(strip=True) if first_h2 else "WoW Forever Güncellemesi"
-        snippet = "Detaylar için haber sayfasına bakın."
-        link = NEWS_URL
-    else:
-        title_el = card.find(["h2", "h3", "a"])
-        title = title_el.get_text(strip=True) if title_el else "Yeni Haber"
-        
-        link_el = card.find("a")
-        link = "https://www.wowhead.com" + link_el["href"] if link_el and link_el.get("href") else NEWS_URL
-        
-        desc_el = card.find(["p", "div", "span"], class_=["description", "body", "news-list-card-content"])
-        snippet = desc_el.get_text(strip=True) if desc_el else ""
+    if not forever_entries:
+        print("Akışta henüz WoW Forever kategorisine ait haber bulunamadı.")
+        return
 
-    print(f"Bulunan en son başlık: {title}")
-    
-    last_saved_title = get_last_title()
-    print(f"Kayıtlı önceki başlık: {last_saved_title}")
+    latest_entry = forever_entries[0]
+    title = latest_entry.title
+    link = latest_entry.link
+    entry_id = latest_entry.id
 
-    # TEST MODU: Doğrudan mesaj atsın (yeni haber kontrolü yapmadan)
-    print("Discord'a mesaj iletiliyor...")
-    msg = f"⚔️ **[WoW Forever] {title}**\n\n{snippet}\n\n🔗 *{link}*"
-    send_to_discord(msg)
+    print(f"Bulunan en son WoW Forever haberi: {title}")
     
-    # Başlığı kaydet
-    set_last_title(title)
+    last_id = get_last_id()
+    
+    # İçeriği RSS'ten temiz metin olarak al
+    raw_content = ""
+    if "content" in latest_entry:
+        raw_content = latest_entry.content[0].value
+    elif "summary" in latest_entry:
+        raw_content = latest_entry.summary
+    elif "description" in latest_entry:
+        raw_content = latest_entry.description
+
+    body_text = clean_html(raw_content)
+
+    full_message = f"⚔️ **[WoW Forever] {title}**\n\n{body_text}\n\n🔗 *Kaynak: {link}*"
+    
+    # Discord'a gönder
+    print("Discord'a iletiliyor...")
+    send_to_discord(full_message)
+    set_last_id(entry_id)
 
 if __name__ == "__main__":
     try:
         run()
     except Exception as e:
-        print(f"Çalışma sırasında hata: {e}")
+        print(f"Hata: {e}")
