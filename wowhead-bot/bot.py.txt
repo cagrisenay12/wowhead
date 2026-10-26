@@ -1,0 +1,83 @@
+import time
+import os
+import feedparser
+import requests
+from bs4 import BeautifulSoup
+
+WEBHOOK_URL = os.getenv("https://discord.com/api/webhooks/1564335678458957874/k-T8sQPIgKuxCfqYETULyuE3NdSVDNqaTnyaXYH-PXt2DBa7xKXIRMZdak_VHfBTzyy9")
+RSS_URL = "https://www.wowhead.com/news/rss/all"
+LAST_ENTRY_FILE = "last_id.txt"
+
+def get_last_entry_id():
+    if os.path.exists(LAST_ENTRY_FILE):
+        with open(LAST_ENTRY_FILE, "r") as f:
+            return f.read().strip()
+    return None
+
+def set_last_entry_id(entry_id):
+    with open(LAST_ENTRY_FILE, "w") as f:
+        f.write(entry_id)
+
+def send_to_discord(content):
+    # Discord tek mesajda maksimum 2000 karaktere izin verir.
+    # Güvenli pay bırakmak için 1900'lük bloklara bölüp yolluyoruz:
+    chunks = [content[i:i+1900] for i in range(0, len(content), 1900)]
+    for chunk in chunks:
+        payload = {"content": chunk}
+        res = requests.post(WEBHOOK_URL, json=payload)
+        time.sleep(1) # Discord rate limit'e takılmamak için kısa bekleme
+
+def fetch_article_text(url):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    res = requests.get(url, headers=headers)
+    if res.status_code != 200:
+        return "İçerik çekilemedi."
+    
+    soup = BeautifulSoup(res.text, "html.parser")
+    
+    # Wowhead haberlerinin ana gövdesi genellikle bu sınıf altındadır
+    article_body = soup.find("div", class_="news-post-content")
+    if not article_body:
+        article_body = soup.find("div", class_="text")
+        
+    if not article_body:
+        return "Haber metni ayrıştırılamadı."
+
+    # Gereksiz script ve reklam bloklarını temizle
+    for element in article_body(["script", "style", "noscript"]):
+        element.decompose()
+
+    return article_body.get_text(separator="\n", strip=True)
+
+def check_feed():
+    feed = feedparser.parse(RSS_URL)
+    if not feed.entries:
+        return
+
+    latest_entry = feed.entries[0]
+    last_id = get_last_entry_id()
+
+    # Yeni bir içerik varsa
+    if latest_entry.id != last_id:
+        title = latest_entry.title
+        link = latest_entry.link
+        print(f"Yeni haber bulundu: {title}")
+
+        # Sayfa içeriğini çek
+        body_text = fetch_article_text(link)
+
+        # Başlık ve içeriği hazırla
+        header = f"📢 **{title}**\n\n"
+        full_text = header + body_text
+
+        send_to_discord(full_text)
+        set_last_entry_id(latest_entry.id)
+
+if __name__ == "__main__":
+    print("Bot başlatıldı, Wowhead RSS akışı dinleniyor...")
+    while True:
+        try:
+            check_feed()
+        except Exception as e:
+            print(f"Hata oluştu: {e}")
+        time.sleep(300) # 5 dakikada bir kontrol eder (300 saniye)
