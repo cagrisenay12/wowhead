@@ -4,7 +4,7 @@ import feedparser
 import requests
 from bs4 import BeautifulSoup
 
-WEBHOOK_URL = os.getenv("https://discord.com/api/webhooks/1564335678458957874/k-T8sQPIgKuxCfqYETULyuE3NdSVDNqaTnyaXYH-PXt2DBa7xKXIRMZdak_VHfBTzyy9")
+WEBHOOK_URL = "https://discord.com/api/webhooks/1564335678458957874/k-T8sQPIgKuxCfqYETULyuE3NdSVDNqaTnyaXYH-PXt2DBa7xKXIRMZdak_VHfBTzyy9"
 RSS_URL = "https://www.wowhead.com/news/rss/all"
 LAST_ENTRY_FILE = "last_id.txt"
 
