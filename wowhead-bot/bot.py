@@ -46,8 +46,8 @@ def check_feed():
     latest_entry = feed.entries[0]
     last_id = get_last_entry_id()
 
-    # Yeni bir içerik varsa veya ilk çalıştırmaysa
-    if latest_entry.id != last_id:
+# Test için her zaman çalıştır:
+    if True:
         title = latest_entry.title
         link = latest_entry.link
         print(f"Yeni WoW Forever haberi bulundu: {title}")
