@@ -2,9 +2,11 @@ name: WoW Forever Updater
 
 on:
   schedule:
-    # Her 15 dakikada bir otomatik çalışır
     - cron: '*/15 * * * *'
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
   run-updater:
